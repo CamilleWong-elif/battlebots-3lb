@@ -22,5 +22,5 @@ Software:
 - ## How To Run
 (simulator + UI steps)
 
-##Contributing
+## Contributing
 See CONTRIBUTING.md
