@@ -1,6 +1,6 @@
 # Battle bots - 3lb Interface
 
-Software:
+## Software:
 - Weapon kill switch
 - Telemetry-based damage/health reporting UI
 
