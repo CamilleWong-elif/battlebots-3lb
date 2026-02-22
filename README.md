@@ -1,6 +1,4 @@
-# battlebots-3lb
-
-#Battle bots Interface
+# Battle bots - 3lb Interface
 
 Software:
 - Weapon kill switch
