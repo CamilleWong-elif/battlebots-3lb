@@ -1,106 +1,79 @@
 // ============================================================
-// Battlebot Weapon Kill Switch
-// Teensy 4.0 + FlySky i6
+// Battlebot Weapon Spin-Up
+// Teensy 4.0 + Vortex 80A ESC + 2836 Brushless Motor
 // ============================================================
 // Wiring:
-//   FlySky receiver CH3 (throttle) -> PIN_THROTTLE_IN
-//   FlySky receiver CH5 (kill switch) -> PIN_KILL_IN
-//   Weapon ESC signal wire          -> PIN_WEAPON_OUT
-//   Drive ESC signal wire           -> PIN_DRIVE_OUT  (passthrough)
+//   Weapon ESC signal wire -> PIN_WEAPON_OUT (Pin 3)
 //   All grounds tied together
 // ============================================================
-
 #include <Arduino.h>
 
 // --- Pin Definitions ---
-const int PIN_THROTTLE_IN = 7;   // Drive throttle from receiver (CH3)
-const int PIN_KILL_IN     = 6;   // Kill switch channel from receiver (CH5 or CH6)
+const int PIN_THROTTLE_IN = 7;   // Unused (kept for reference)
+const int PIN_KILL_IN     = 6;   // Unused (kept for reference)
 const int PIN_WEAPON_OUT  = 3;   // Output to weapon ESC
-const int PIN_DRIVE_OUT   = 4;   // Output to drive ESC (passthrough)
+const int PIN_DRIVE_OUT   = 4;   // Unused (kept for reference)
 
 // --- PWM Pulse Limits ---
-const int PWM_MIN         = 1000;  // microseconds (full reverse / off)
-const int PWM_MID         = 1500;  // microseconds (neutral)
-const int PWM_MAX         = 2000;  // microseconds (full forward)
+const int PWM_MIN         = 1000; // microseconds (off / ESC arm signal)
+const int PWM_MAX         = 2000; // microseconds (full speed)
 
-// --- Kill Switch Threshold ---
-// FlySky 3-pos switch: ~1000 (down), ~1500 (mid), ~2000 (up)
-// We treat anything above 1700us as "ARMED"
-const int KILL_THRESHOLD  = 1700;
+// --- Ramp Parameters ---
+const int   RAMP_STEP_US  = 100;   // microseconds per step
+const int   RAMP_DELAY_MS = 20;   // milliseconds between steps
 
-// --- Safety: pulse timeout (if no signal, kill weapon) ---
-const unsigned long SIGNAL_TIMEOUT_MS = 250;
-
-unsigned long lastThrottleTime = 0;
-unsigned long lastKillTime     = 0;
-
-// Read a PWM pulse width in microseconds from a pin
-// Returns 0 on timeout
-unsigned long readPWM(int pin) {
-  unsigned long duration = pulseIn(pin, HIGH, 25000); // 25ms timeout
-  return duration;
+// Helper: send a single PWM pulse on PIN_WEAPON_OUT
+void sendPulse(int pulseWidth_us) {
+  digitalWrite(PIN_WEAPON_OUT, HIGH);
+  delayMicroseconds(pulseWidth_us);
+  digitalWrite(PIN_WEAPON_OUT, LOW);
 }
 
 void setup() {
-  pinMode(PIN_THROTTLE_IN, INPUT);
-  pinMode(PIN_KILL_IN,     INPUT);
-  pinMode(PIN_WEAPON_OUT,  OUTPUT);
-  pinMode(PIN_DRIVE_OUT,   OUTPUT);
-
-  // Send safe/disarmed signal to weapon ESC on startup
-  // ESCs need to see a LOW (1000us) pulse to arm safely
-  for (int i = 0; i < 100; i++) {
-    digitalWrite(PIN_WEAPON_OUT, HIGH);
-    delayMicroseconds(PWM_MIN);
-    digitalWrite(PIN_WEAPON_OUT, LOW);
-    delay(20);
-  }
-
   Serial.begin(115200);
-  Serial.println("Battlebot controller initialized. Weapon DISARMED.");
+  pinMode(PIN_WEAPON_OUT, OUTPUT);
+
+  delay(3000);
+  Serial.println("Boot delay complete, starting ESC sequence...");
+
+  // ----------------------------------------------------------
+  // Phase 1: ESC Arming Sequence
+  // Send PWM_MIN (1000us) pulses for ~2 seconds so the ESC
+  // initialises and recognises the throttle-low position.
+  // At 20ms per cycle that's ~100 pulses.
+  // ----------------------------------------------------------
+  Serial.println("=== ESC Arming: sending 1000us for 2s ===");
+  for (int i = 0; i < 100; i++) {
+    sendPulse(PWM_MIN);
+    delay(RAMP_DELAY_MS); // 100 x 20ms = 2000ms
+  }
+  Serial.println("Arming complete.");
+
+  // ----------------------------------------------------------
+  // Phase 2: Smooth Ramp 1000us -> 2000us
+  // 10us steps every 20ms = 100 steps x 20ms = 2000ms
+  // ----------------------------------------------------------
+  Serial.println("=== Ramping weapon ESC to full speed ===");
+  for (int pw = PWM_MIN; pw <= PWM_MAX; pw += RAMP_STEP_US) {
+    sendPulse(pw);
+    Serial.print("Weapon PWM: ");
+    Serial.print(pw);
+    Serial.println("us");
+    delay(RAMP_DELAY_MS);
+  }
+  Serial.println("=== Full speed reached: holding at 2000us ===");
 }
 
 void loop() {
-  unsigned long now = millis();
+  // Hold at full speed indefinitely
+  sendPulse(PWM_MAX);
 
-  // --- Read kill switch channel ---
-  unsigned long killPulse = readPWM(PIN_KILL_IN);
-  if (killPulse > 0) lastKillTime = now;
+  // Debug heartbeat — prints every ~100 pulses to avoid flooding Serial
+  static unsigned long lastPrint = 0;
+  if (millis() - lastPrint >= 2000) {
+    Serial.println("Weapon PWM: 2000us (holding)");
+    lastPrint = millis();
+  }
 
-  // --- Read throttle / drive channel ---
-  unsigned long throttlePulse = readPWM(PIN_THROTTLE_IN);
-  if (throttlePulse > 0) lastThrottleTime = now;
-
-  // --- Signal loss safety: kill weapon if receiver goes silent ---
-  bool signalLost = (now - lastKillTime > SIGNAL_TIMEOUT_MS) ||
-                    (now - lastThrottleTime > SIGNAL_TIMEOUT_MS);
-
-  // --- Determine armed state ---
-  // Switch UP (>1700us) = ARMED, anything else = DISARMED
-  bool weaponArmed = (!signalLost) && (killPulse >= KILL_THRESHOLD);
-
-  // --- Output to weapon ESC ---
-  unsigned long weaponPulse = weaponArmed ? throttlePulse : PWM_MIN;
-
-  // Clamp to safe range
-  weaponPulse = constrain(weaponPulse, PWM_MIN, PWM_MAX);
-  unsigned long drivePulse = constrain(throttlePulse, PWM_MIN, PWM_MAX);
-
-  // --- Send weapon PWM ---
-  digitalWrite(PIN_WEAPON_OUT, HIGH);
-  delayMicroseconds(weaponPulse);
-  digitalWrite(PIN_WEAPON_OUT, LOW);
-
-  // --- Send drive PWM passthrough ---
-  digitalWrite(PIN_DRIVE_OUT, HIGH);
-  delayMicroseconds(drivePulse);
-  digitalWrite(PIN_DRIVE_OUT, LOW);
-
-  // --- Debug output ---
-  Serial.print("Kill: "); Serial.print(killPulse);
-  Serial.print("us | Armed: "); Serial.print(weaponArmed ? "YES" : "NO");
-  Serial.print(" | Weapon PWM: "); Serial.print(weaponPulse);
-  Serial.print("us | Drive PWM: "); Serial.println(drivePulse);
-
-  delay(5); // ~50Hz loop
+  delay(RAMP_DELAY_MS); // maintain ~50Hz pulse rate
 }
