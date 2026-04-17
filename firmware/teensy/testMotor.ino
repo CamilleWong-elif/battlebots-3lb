@@ -5,35 +5,40 @@ Servo esc;
 
 const int ESC_PIN = 22;
 
+int currentPWM = 1000; // start stopped
+
 void setup() {
   Serial.begin(115200);
 
-  esc.attach(ESC_PIN);
+  esc.attach(ESC_PIN, 1000, 2000);
 
   Serial.println("Starting ESC test...");
 
-  // Send minimum throttle BEFORE ESC power
+  // Arm ESC
   esc.writeMicroseconds(1000);
-  Serial.println("Sending 1000us (arm)");
+  Serial.println("Arming at 1000us...");
+  delay(8000);
 
-  delay(8000);  // give ESC time to arm
-
-  // Slowly increase throttle
-  Serial.println("Trying 1100us...");
-  esc.writeMicroseconds(1100);
-  delay(4000);
-
-  Serial.println("Trying 1200us...");
-  esc.writeMicroseconds(1200);
-  delay(4000);
-
-  // Stop motor
-  Serial.println("Stopping...");
-  esc.writeMicroseconds(1000);
+  Serial.println("Ready!");
+  Serial.println("Type 1 = ON, 0 = OFF");
 }
 
 void loop() {
-  // Keep sending valid signal
-  esc.writeMicroseconds(1000);
+  // Check for keyboard input
+  if (Serial.available()) {
+    char cmd = Serial.read();
+
+    if (cmd == '1') {
+      currentPWM = 1300;  // spin
+      Serial.println("Motor ON");
+    }
+    else if (cmd == '0') {
+      currentPWM = 1000;  // stop
+      Serial.println("Motor OFF");
+    }
+  }
+
+  // Keep sending signal
+  esc.writeMicroseconds(currentPWM);
   delay(20);
 }
