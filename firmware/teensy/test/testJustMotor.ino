@@ -3,7 +3,7 @@
 
 Servo esc;
 
-const int ESC_PIN = 22;
+const int ESC_PIN = 9;
 
 int currentPWM = 1000; // start stopped
 
