@@ -1,74 +1,69 @@
 #include <Servo.h>
 
-// ============================================================
-// Weapon Control + RC Signal Print
-// Arduino Uno / Elegoo Uno R3
-// ============================================================
+const int PIN_WEAPON_OUT = 9;
+const int PIN_RC_WEAPON_INPUT = 2;   // must be interrupt pin on Uno
+const int PWM_MIN = 1000;
+const int PWM_MAX = 2000;
 
-// --- Pins ---
-const int PIN_WEAPON_OUT      = 9;   // ESC signal output
-const int PIN_RC_WEAPON_INPUT = 7;   // RC receiver signal input
-
-// --- ESC pulse limits ---
-const int PWM_MIN = 1000;   // weapon OFF
-const int PWM_MAX = 2000;   // weapon ON
-
-// --- Threshold ---
-const int WEAPON_ON_THRESHOLD = 1500;
-
-// --- ESC object ---
 Servo weaponESC;
+
+volatile unsigned long riseTime = 0;
+volatile unsigned int rcValue = 1500;
+volatile bool newPulse = false;
+
+void rcISR() {
+  if (digitalRead(PIN_RC_WEAPON_INPUT) == HIGH) {
+    riseTime = micros();
+  } else {
+    unsigned long width = micros() - riseTime;
+    if (width >= 900 && width <= 2100) {
+      rcValue = width;
+      newPulse = true;
+    }
+  }
+}
 
 void setup() {
   Serial.begin(115200);
   pinMode(PIN_RC_WEAPON_INPUT, INPUT);
   weaponESC.attach(PIN_WEAPON_OUT);
 
-  Serial.println("=================================");
-  Serial.println("Weapon Control + RC Monitor Start");
-  Serial.println("=================================");
+  attachInterrupt(digitalPinToInterrupt(PIN_RC_WEAPON_INPUT), rcISR, CHANGE);
 
-  // Arm ESC safely
-  Serial.println("Arming ESC at minimum throttle...");
+  Serial.println("Arming ESC...");
   weaponESC.writeMicroseconds(PWM_MIN);
   delay(5000);
-
   Serial.println("ESC armed.");
-  Serial.println("Monitoring RC input...");
-  Serial.println();
 }
 
 void loop() {
-  // Read RC signal
-  unsigned long rcValue = pulseIn(PIN_RC_WEAPON_INPUT, HIGH, 25000);
+  static unsigned long lastGoodSignal = 0;
+  static unsigned long lastPrint = 0;
 
-  // Print raw RC signal
-  Serial.print("RC Pulse: ");
-  Serial.print(rcValue);
-  Serial.print(" us");
+  noInterrupts();
+  unsigned int currentRC = rcValue;
+  bool gotPulse = newPulse;
+  newPulse = false;
+  interrupts();
 
-  // Failsafe
-  if (rcValue < 900 || rcValue > 2100) {
+  if (gotPulse) {
+    lastGoodSignal = millis();
+    int pwmOut = constrain(currentRC, PWM_MIN, PWM_MAX);
+    weaponESC.writeMicroseconds(pwmOut);
+
+    if (millis() - lastPrint > 100) {
+      Serial.print("RC: ");
+      Serial.print(currentRC);
+      Serial.print("  PWM Out: ");
+      Serial.println(pwmOut);
+      lastPrint = millis();
+    }
+  } else if (millis() - lastGoodSignal > 100) {
     weaponESC.writeMicroseconds(PWM_MIN);
-    Serial.print(" | Status: FAILSAFE");
-    Serial.print(" | PWM Out: ");
-    Serial.println(PWM_MIN);
-    delay(20);
-    return;
-  }
 
-  // Weapon ON/OFF control
-  if (rcValue > WEAPON_ON_THRESHOLD) {
-    weaponESC.writeMicroseconds(PWM_MAX);
-    Serial.print(" | Status: WEAPON ON");
-    Serial.print(" | PWM Out: ");
-    Serial.println(PWM_MAX);
-  } else {
-    weaponESC.writeMicroseconds(PWM_MIN);
-    Serial.print(" | Status: WEAPON OFF");
-    Serial.print(" | PWM Out: ");
-    Serial.println(PWM_MIN);
+    if (millis() - lastPrint > 200) {
+      Serial.println("FAILSAFE");
+      lastPrint = millis();
+    }
   }
-
-  delay(20); // ~50 Hz
 }
